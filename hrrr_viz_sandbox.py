@@ -6,6 +6,7 @@
 #     "dash==3.3.0",
 #     "dash-html-components==2.0.0",
 #     "dash-leaflet==1.1.3",
+#     "folium==0.20.0",
 #     "geopandas==1.1.1",
 #     "ipython==9.7.0",
 #     "mapclassify==2.10.0",
@@ -155,7 +156,7 @@ def _(xr):
         DATASET_LINK,
         chunks=None
     )
-    return DATASET_LINK, ds
+    return (ds,)
 
 
 @app.cell
@@ -164,10 +165,10 @@ def _(
     ds,
     init_time_dropdown,
     lead_time_slider,
+    make_plot,
     make_time_str,
     mo,
     pd,
-    plt,
     riverwoods_x,
     riverwoods_y,
     zoom_level,
@@ -177,12 +178,12 @@ def _(
     clip_ds = ds.sel(init_time=utc_init_time, lead_time=pd.Timedelta(hours=lead_time_slider.value), method="nearest").rio.clip_box(riverwoods_x-zoom_level, riverwoods_y-zoom_level, riverwoods_x+zoom_level, riverwoods_y+zoom_level, crs="EPSG:4326")["precipitation_surface"]
 
 
-    fig, ax = plt.subplots()
-    clip_ds.plot(ax=ax)
-    valid_time_str = make_time_str(clip_ds.valid_time.values, tzinfo=display_timezone.value)
-    ax.set_title(f"Total precip in Riverwoods at {valid_time_str}")
-    mo.mpl.interactive(fig)
-    return clip_ds, fig
+
+    _title_str = f"Total precip in Riverwoods at {make_time_str(clip_ds.valid_time.values, tzinfo=display_timezone.value)}"
+
+    _fig = make_plot(clip_ds, _title_str)
+    mo.mpl.interactive(_fig)
+    return (clip_ds,)
 
 
 @app.cell(hide_code=True)
@@ -200,36 +201,11 @@ def _(clip_ds, display_timezone, make_plot, make_time_str, mo, np):
     # Reprojection to WGS84 (tldr? Ellipsoid to different ellipsoid)
     ds_wgs84 = ds_conic.rio.reproject("EPSG:4326", nodata=np.nan)
 
-    title_str = f"Total precip in Riverwoods at {make_time_str(ds_wgs84.valid_time.values, tzinfo=display_timezone.value)}"
+    _title_str = f"Total precip in Riverwoods at {make_time_str(ds_wgs84.valid_time.values, tzinfo=display_timezone.value)}"
 
-    fig_2 = make_plot(ds_wgs84, title_str)
-    mo.mpl.interactive(fig_2)
+    _fig = make_plot(ds_wgs84, _title_str)
+    mo.mpl.interactive(_fig)
     return (ds_wgs84,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Attempting to get osm features that I can aggregate over
-    https://osmnx.readthedocs.io/en/stable/user-reference.html#module-osmnx.features
-
-    https://github.com/gboeing/osmnx-examples/blob/main/notebooks/00-osmnx-features-demo.ipynb
-
-    https://github.com/gboeing/osmnx-examples/blob/aefc513ed6d9425641bada8d61c2b0f32124a2f2/notebooks/16-download-osm-geospatial-features.ipynb
-
-    https://www.openstreetmap.org/relation/122942#map=11/42.0916/-87.8199
-
-    https://wiki.openstreetmap.org/wiki/Tag:boundary%3Dadministrative#Country_specific_values_%E2%80%8B%E2%80%8Bof_the_key_admin_level=*
-    """)
-    return
-
-
-@app.cell
-def _():
-    # bbox = () # left, bottom, right, top, as lat/long (EPSG:4326)
-    # chicago_geoms = ox.features_from_bbox(bbox, tags={"admin_level": "8"})
-    # chicago_geoms
-    return
 
 
 @app.cell(hide_code=True)
@@ -242,161 +218,60 @@ def _(mo):
 
 @app.cell
 def _(ds_wgs84, riverwoods_x, riverwoods_y, zoom_level):
+    ## Clip down to a rectangular area again now that it's in WGS84
     ds_wgs84_clip = ds_wgs84.rio.clip_box(riverwoods_x-zoom_level*.9, riverwoods_y-zoom_level*.9, riverwoods_x+zoom_level*.9, riverwoods_y+zoom_level*.9)
     return (ds_wgs84_clip,)
 
 
 @app.cell
-def _(gpd, test_df):
-    gpd.points_from_xy(test_df.x, test_df.y)
-    return
+def _(Polygon, ds_wgs84_clip, gpd, np):
+    ## Make geodataframe from dataset, with the pixel geometries as polygons
 
+    ## Make df -- will later turn this into a gdf once we create polygon geoms
+    df_polygons = ds_wgs84_clip.to_dataframe().reset_index().drop(columns=["ingested_forecast_length", "expected_forecast_length", "spatial_ref", "lead_time"])
 
-@app.cell
-def _(ds_wgs84_clip, gpd):
-    test_df = ds_wgs84_clip.to_dataframe().reset_index().drop(columns=["ingested_forecast_length", "expected_forecast_length", "spatial_ref", "lead_time"])
-    gdf = gpd.GeoDataFrame(test_df, geometry=gpd.points_from_xy(test_df.x, test_df.y)).set_crs("EPSG:4326")
-    gdf
-    return gdf, test_df
-
-
-@app.cell
-def _(Polygon, ds_wgs84_clip, gpd, np, test_df):
-    test_df_polygons = test_df.copy()
+    ## Get basic info to create polygons with
     # Get the coordinate arrays (assumes they are 1D and sorted)
-    lats = ds_wgs84_clip['y'].values
     lons = ds_wgs84_clip['x'].values
-
-    # 2. Calculate Half-Resolution / Cell Size
-    # Calculate the difference between adjacent coordinates
-    # We use numpy.diff and append the last value to keep the array the same size
-    # This works for uniform grids, which is standard for rasters.
+    lats = ds_wgs84_clip['y'].values
+    # Grab resolution directly off the diffs
     lon_diff = np.diff(lons)
     lat_diff = np.diff(lats)
-
     # Calculate half-step for both dimensions
     half_lon_step = np.mean(np.abs(lon_diff)) / 2.0
     half_lat_step = np.mean(np.abs(lat_diff)) / 2.0
+    # Create min/max per pixel, to be turned into Polygon boundaries
+    df_polygons['lon_min'] = df_polygons['x'] - half_lon_step
+    df_polygons['lon_max'] = df_polygons['x'] + half_lon_step
+    df_polygons['lat_min'] = df_polygons['y'] - half_lat_step
+    df_polygons['lat_max'] = df_polygons['y'] + half_lat_step
 
-    # 3. Calculate Corner Coordinates
-    # Apply the half-step offset to the center coordinates (lat, lon) to get the boundaries
-    # The arrays are ordered from min to max, so 'min' is the starting boundary.
-    test_df_polygons['lon_min'] = test_df_polygons['x'] - half_lon_step
-    test_df_polygons['lon_max'] = test_df_polygons['x'] + half_lon_step
-    test_df_polygons['lat_min'] = test_df_polygons['y'] - half_lat_step
-    test_df_polygons['lat_max'] = test_df_polygons['y'] + half_lat_step
-
-    # 4. Create Shapely Polygons
-    # Create the Polygon object for each row/pixel.
-    # Vertices must be defined in order: (min_lon, min_lat), (max_lon, min_lat), 
-    # (max_lon, max_lat), (min_lon, max_lat), and back to the start.
-    test_df_polygons['geometry'] = test_df_polygons.apply(
+    ## Create Polygon geoms
+    df_polygons['geometry'] = df_polygons.apply(
         lambda row: Polygon([
+            # vertices, counterclockwise
             (row['lon_min'], row['lat_min']),
             (row['lon_max'], row['lat_min']),
             (row['lon_max'], row['lat_max']),
-            (row['lon_min'], row['lat_max'])
+            (row['lon_min'], row['lat_max']),
+            (row['lon_min'], row['lat_min']),
         ]), 
         axis=1
     )
 
-    # 5. Create GeoDataFrame
-    # 'value' is your original raster data, 'geometry' is the new polygon column
+    ## Use newly created geometry column to convert to GeoDataFrame
     gdf_polygons = gpd.GeoDataFrame(
-        test_df_polygons[['x', 'y', 'precipitation_surface', 'geometry']], 
+        df_polygons[['x', 'y', 'precipitation_surface', 'geometry']], 
         crs="EPSG:4326"
     )
-
-    # Drop the center coordinates if you only need the geometry
-    gdf_polygons = gdf_polygons.drop(columns=['x', 'y'])
-
-    print(gdf_polygons.iloc[0].geometry)
     return (gdf_polygons,)
 
 
 @app.cell
-def _(gdf):
-    print(gdf.iloc[0].geometry)
-    return
-
-
-@app.cell
-def _(gdf):
-    gdf.explore("precipitation_surface")
-    return
-
-
-@app.cell
-def _(gdf_polygons):
+def _(folium, gdf_polygons, riverwoods_x, riverwoods_y):
     map = gdf_polygons.explore("precipitation_surface",style_kwds={"stroke":False})
+    folium.Marker(location=(riverwoods_y, riverwoods_x), popup="Riverwoods, IL").add_to(map)
     map
-    return (map,)
-
-
-@app.cell
-def _(map):
-    type(map)
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Attempting to plot with Canvas/datashader
-    See this suuuuuper helpful link: https://martinfleischmann.net/sds/raster_data/hands_on.html
-    """)
-    return
-
-
-@app.cell(disabled=True, hide_code=True)
-def _(datashader):
-    canvas = datashader.Canvas(plot_width=600, plot_height=600)
-    canvas.raster()
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Attempting to add map to it
-    """)
-    return
-
-
-@app.cell
-def _(go, mo, riverwoods_x, riverwoods_y):
-
-    map_fig = go.Figure(go.Scattermap(
-            lat=[riverwoods_y],
-            lon=[riverwoods_x],
-            mode='markers',
-            marker=go.scattermap.Marker(
-                size=14, color="pink"
-            ),
-            text=['Riverwoods'],
-        ))
-
-    map_fig.update_layout(
-        hovermode='closest',
-        map=dict(
-            bearing=0,
-            center=go.layout.map.Center(
-                lat=riverwoods_y,
-                lon=riverwoods_x
-            ),
-            pitch=0,
-            zoom=10
-        )
-    )
-
-    mo.ui.plotly(map_fig)
-    # map_fig.show()
-    return
-
-
-@app.cell
-def _(fig):
-    dir(fig)
     return
 
 
@@ -430,7 +305,8 @@ def _():
     import geopandas as gpd
     import xvec
     from shapely.geometry import Polygon
-    return Affine, CRS, Polygon, go, gpd, mo, np, pd, plt, rasterio, xr
+    import folium
+    return Polygon, folium, gpd, mo, np, pd, plt, xr
 
 
 @app.cell
@@ -452,103 +328,6 @@ def _(plt):
         ax.set_title(title_str)
         return fig
     return (make_plot,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Attempting to Warp HRRR ds to WGS84 (unsuccessful so far)
-    """)
-    return
-
-
-@app.cell(disabled=True, hide_code=True)
-def _(DATASET_LINK, ds, rasterio):
-    with rasterio.open(DATASET_LINK) as src:
-        print(src.crs)
-        # with WarpedVRT(src,resampling=1,src_crs=src.crs,crs=crs.CRS.from_epsg("EPSG:4326")) as vrt:
-        #         print('Destination CRS:' +str(vrt.crs))
-        #         ds = rioxarray.open_rasterio(vrt).chunk(ds_original_projection.chunks).to_dataset(name='hrrr')
-    ds
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Stuff that didn't work to transform to wgs84
-    """)
-    return
-
-
-@app.cell(disabled=True, hide_code=True)
-def _(clip_ds, correct_crs):
-    rewritten_clip_ds = clip_ds.rio.write_crs(correct_crs)
-    rewritten_clip_ds.rio.crs
-    return
-
-
-@app.cell(hide_code=True)
-def _(CRS):
-    # 1. Define the correct LCC PROJ string based on your WKT
-    # Key parameters:
-    # +proj=lcc (Lambert Conformal Conic)
-    # +lat_1=38.5 +lat_2=38.5 (Standard Parallels)
-    # +lat_0=38.5 (Latitude of Origin)
-    # +lon_0=-97.5 (Central Meridian)
-    # +a=6371229 +b=6371229 (Sphere Radius)
-    # +units=m (Units are Metres)
-    proj4_string = "+proj=lcc +lat_1=38.5 +lat_2=38.5 +lat_0=38.5 +lon_0=-97.5 +a=6371229 +b=6371229 +units=m +no_defs"
-
-    # 2. Create the CRS object from the PROJ string
-    correct_crs = CRS.from_proj4(proj4_string)
-    return (correct_crs,)
-
-
-@app.cell(disabled=True, hide_code=True)
-def _(clip_ds):
-    clip_ds.rio.crs
-    return
-
-
-@app.cell(disabled=True, hide_code=True)
-def _(clip_ds):
-    clip_ds.rio.bounds()
-    return
-
-
-@app.cell(disabled=True, hide_code=True)
-def _(Affine, clip_ds, np):
-    # 1. Get the resolution (pixel size)
-    x_res = clip_ds.x[1].item() - clip_ds.x[0].item()
-    y_res = clip_ds.y[1].item() - clip_ds.y[0].item() # Note: y-resolution is often negative!
-
-    # 2. Get the origin (top-left corner of the *top-left pixel*)
-    # The coordinates usually represent the center of the pixel, so we adjust by half a resolution.
-    x_min = clip_ds.x[0].item() - (x_res / 2)
-    y_max = clip_ds.y[0].item() + (y_res / 2) # For y, we use the max coordinate (the top edge)
-
-    # 3. Create the Affine Transform:
-    # Affine(a, b, c, d, e, f) where:
-    # a = x-resolution
-    # b = 0 (no rotation)
-    # c = x_min (top-left x-coordinate)
-    # d = 0 (no rotation)
-    # e = y-resolution (often negative)
-    # f = y_max (top-left y-coordinate)
-
-    transform = Affine(x_res, 0.0, x_min, 0.0, -abs(y_res), y_max)
-
-    # 4. Write the calculated transform and then reproject
-    affine_clip_ds = clip_ds.rio.write_transform(transform)
-
-    print(affine_clip_ds.rio.transform()) # Verify the transform was written
-
-    # 5. Reproject again
-    affine_wgs84 = affine_clip_ds.rio.reproject("EPSG:4326", nodata=np.nan)
-
-    affine_wgs84
-    return
 
 
 if __name__ == "__main__":
