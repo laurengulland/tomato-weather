@@ -13,6 +13,7 @@
 #     "marimo",
 #     "matplotlib==3.10.7",
 #     "numpy==2.2.6",
+#     "openlayers==0.1.6",
 #     "pandas==2.3.3",
 #     "plotly==6.5.0",
 #     "pyproj==3.7.2",
@@ -32,10 +33,6 @@ app = marimo.App(
     css_file="/usr/local/_marimo/custom.css",
     auto_download=["html"],
 )
-
-with app.setup:
-    # Initialization code that runs before all other cells
-    pass
 
 
 @app.cell(hide_code=True)
@@ -124,47 +121,6 @@ def _(mo):
 
 
 @app.cell
-def _():
-    """
-    ## TODO: location picker
-    defaults, plus custom any lat/long input?
-
-    See this marimo example for getting input: https://eoda-dev.github.io/py-openlayers/marimo/getting-started.html
-    """
-
-    riverwoods_x = -87.90219091178325
-    riverwoods_y = 42.17245575311014
-    return riverwoods_x, riverwoods_y
-
-
-@app.cell
-def _():
-    """
-    ## TODO: zoom level slider
-    add zoom level slider to affect +/- around the point location to clip to -- but add a little extra and then clip down after reprojection so it's a box again.
-    """
-
-    zoom_level = 0.75  # degrees around center to add
-    return (zoom_level,)
-
-
-@app.cell
-def _():
-    # class ZoomLevels(Enum):
-    #     Point = 0
-    #     City = 2
-
-    # zoom_level = mo.ui.dropdown(, value=1, show_value=True)
-
-    # mo.md(
-    #     f"""
-    #     Zoom Level: {zoom_level}
-    #     """
-    # )
-    return
-
-
-@app.cell
 def _(mo):
     var_human_to_technical_name = {
         "Surface Precipitation": "precipitation_surface",
@@ -181,6 +137,47 @@ def _(mo):
         """
     )
     return var_human_name, var_human_to_technical_name
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    Location selection: (Zoom and pan map to desired location)
+    """)
+    return
+
+
+@app.cell
+def _(mo, openlayers):
+    # Based off of this example! https://eoda-dev.github.io/py-openlayers/marimo/getting-started.html
+
+    default_x = -87.90219091178325
+    default_y = 42.17245575311014
+
+    m = openlayers.MapWidget()
+    # m.add_click_interaction()
+    default_view = openlayers.View(
+        projection="EPSG:4326", center=(default_x, default_y), zoom=9
+    )
+    m.set_view(default_view)
+
+    map_widget = mo.ui.anywidget(m)
+    map_widget
+    return (map_widget,)
+
+
+@app.cell
+def _(map_widget):
+    west, south, east, north = map_widget.value["view_state"]["extent"]
+    print(f"Selected bounds: {west} W, {south} S, {east} E, {north} N")
+    return east, north, south, west
+
+
+@app.cell
+def _():
+    # TODO: click to add Point of Interest not working, but not a big deal
+    # clicked_x, clicked_y = map_widget.value["clicked"].get("coordinate", (None, None))
+    return
 
 
 @app.cell(hide_code=True)
@@ -203,17 +200,18 @@ def _(dataset_name, dataset_name_to_dataset_path, xr):
 def _(
     display_timezone,
     ds,
+    east,
     init_time_dropdown,
     lead_time_slider,
     make_plot,
     make_time_str,
     mo,
+    north,
     pd,
-    riverwoods_x,
-    riverwoods_y,
+    south,
     var_human_name,
     var_human_to_technical_name,
-    zoom_level,
+    west,
 ):
     utc_init_time = (
         pd.Timestamp(init_time_dropdown.value)
@@ -227,13 +225,9 @@ def _(
         init_time=utc_init_time,
         lead_time=pd.Timedelta(hours=lead_time_slider.value),
         method="nearest",
-    ).rio.clip_box(
-        riverwoods_x - zoom_level,
-        riverwoods_y - zoom_level,
-        riverwoods_x + zoom_level,
-        riverwoods_y + zoom_level,
-        crs="EPSG:4326",
-    )[var_name]
+    ).rio.clip_box(minx=west, miny=south, maxx=east, maxy=north, crs="EPSG:4326")[
+        var_name
+    ]
 
     _title_str = f"{var_human_name.value} in Riverwoods at {make_time_str(clip_ds.valid_time.values, tzinfo=display_timezone.value)}"
 
@@ -285,13 +279,11 @@ def _(mo):
 
 
 @app.cell
-def _(ds_wgs84, riverwoods_x, riverwoods_y, zoom_level):
+def _(ds_wgs84, east, north, south, west):
     ## Clip down to a rectangular area again now that it's in WGS84
+
     ds_wgs84_clip = ds_wgs84.rio.clip_box(
-        riverwoods_x - zoom_level * 0.9,
-        riverwoods_y - zoom_level * 0.9,
-        riverwoods_x + zoom_level * 0.9,
-        riverwoods_y + zoom_level * 0.9,
+        minx=west, miny=south, maxx=east, maxy=north, crs="EPSG:4326"
     )
     return (ds_wgs84_clip,)
 
@@ -353,16 +345,17 @@ def _(Polygon, ds_wgs84_clip, gpd, np, var_name):
 
 
 @app.cell
-def _(folium, gdf_polygons, riverwoods_x, riverwoods_y, var_name):
+def _(gdf_polygons, var_name):
     # TODO: improve cmap by making 0 always white on temp graph?
     cmap = "coolwarm" if var_name == "temperature_2m" else None
 
-    map = gdf_polygons.explore(
-        var_name, style_kwds={"stroke": False, "fill_opacity": 0.6}, cmap=cmap
-    )
-    folium.Marker(location=(riverwoods_y, riverwoods_x), popup="Riverwoods, IL").add_to(
-        map
-    )
+
+    map = gdf_polygons.explore(var_name,style_kwds={"stroke":False, "fill_opacity":0.6}, cmap=cmap)
+    # TODO: click to add Point of Interest not working, but not a big deal
+    # if clicked_x is not None:
+    #     folium.Marker(
+    #         location=(clicked_x, clicked_y), popup="Clicked Location"
+    #     ).add_to(map)
     map
     return
 
@@ -378,28 +371,14 @@ def _(mo):
 @app.cell
 def _():
     import pandas as pd
-    import rioxarray
-    from IPython.display import HTML
-    from matplotlib.animation import FuncAnimation
     import matplotlib.pyplot as plt
-    import plotly.graph_objects as go
-    from pyproj import Transformer
     import marimo as mo
     import xarray as xr
-    import zarr
-    import datetime
-    import rasterio
-    from rasterio import crs
-    from rasterio.vrt import WarpedVRT
     import numpy as np
-    from pyproj import CRS
-    from affine import Affine
     import geopandas as gpd
-    import xvec
     from shapely.geometry import Polygon
-    import folium
-
-    return Polygon, folium, gpd, mo, np, pd, plt, xr
+    import openlayers
+    return Polygon, gpd, mo, np, openlayers, pd, plt, xr
 
 
 @app.cell
@@ -409,7 +388,6 @@ def _(pd):
         if tzinfo is not None:
             ts = ts.tz_localize("UTC").tz_convert(tzinfo)
         return ts.strftime("%Y-%m-%d %H:%M")
-
     return (make_time_str,)
 
 
@@ -420,7 +398,6 @@ def _(plt):
         ds.plot(ax=ax)
         ax.set_title(title_str)
         return fig
-
     return (make_plot,)
 
 
