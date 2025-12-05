@@ -33,15 +33,11 @@ app = marimo.App(
     auto_download=["html"],
 )
 
-with app.setup:
-    # Initialization code that runs before all other cells
-    pass
-
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Interactive precip explorer
+    # Interactive weather raster exploration
 
     Fetching data from the zarr datasets provided by dynamical.org!
     See: https://dynamical.org/catalog
@@ -79,7 +75,9 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    display_timezone = mo.ui.dropdown(["UTC","America/Chicago"], value="America/Chicago")
+    display_timezone = mo.ui.dropdown(
+        ["UTC", "America/Chicago"], value="America/Chicago"
+    )
 
     mo.md(
         f"""
@@ -91,10 +89,15 @@ def _(mo):
 
 @app.cell
 def _(display_timezone, ds, make_time_str, mo):
-    init_time_options = [make_time_str(t, display_timezone.value) for t in ds.init_time.values[-30:]]
+    init_time_options = [
+        make_time_str(t, display_timezone.value) for t in ds.init_time.values[-30:]
+    ]
 
     # default_value = "2025-11-29 06:00" if dataset_name.value == "NOAA HRRR" else "2025-11-29 00:00"
-    init_time_dropdown = mo.ui.dropdown(init_time_options, value=make_time_str("2025-11-29 00:00", display_timezone.value))
+    init_time_dropdown = mo.ui.dropdown(
+        init_time_options,
+        value=make_time_str("2025-11-29 00:00", display_timezone.value),
+    )
 
     mo.md(
         f"""
@@ -106,8 +109,9 @@ def _(display_timezone, ds, make_time_str, mo):
 
 @app.cell
 def _(mo):
-
-    lead_time_slider = mo.ui.slider(start=1, stop=48, step=1, value=18, show_value=True)
+    lead_time_slider = mo.ui.slider(
+        start=1, stop=48, step=1, value=18, show_value=True
+    )
 
     mo.md(
         f"""
@@ -137,7 +141,8 @@ def _():
     ## TODO: zoom level slider
     add zoom level slider to affect +/- around the point location to clip to -- but add a little extra and then clip down after reprojection so it's a box again.
     """
-    zoom_level = 0.75 # degrees around center to add
+
+    zoom_level = 0.75  # degrees around center to add
     return (zoom_level,)
 
 
@@ -189,10 +194,7 @@ def _(mo):
 def _(dataset_name, dataset_name_to_dataset_path, xr):
     dataset_url = f"https://data.dynamical.org/{dataset_name_to_dataset_path[dataset_name.value]}/latest.zarr?email=laurengulland@gmail.com"
 
-    ds = xr.open_zarr(
-        dataset_url,
-        chunks=None
-    )
+    ds = xr.open_zarr(dataset_url, chunks=None)
     return (ds,)
 
 
@@ -212,11 +214,25 @@ def _(
     var_human_to_technical_name,
     zoom_level,
 ):
-    utc_init_time = pd.Timestamp(init_time_dropdown.value).tz_localize(display_timezone.value).tz_convert("UTC").tz_localize(None)
+    utc_init_time = (
+        pd.Timestamp(init_time_dropdown.value)
+        .tz_localize(display_timezone.value)
+        .tz_convert("UTC")
+        .tz_localize(None)
+    )
     var_name = var_human_to_technical_name[var_human_name.value]
 
-    clip_ds = ds.sel(init_time=utc_init_time, lead_time=pd.Timedelta(hours=lead_time_slider.value), method="nearest").rio.clip_box(riverwoods_x-zoom_level, riverwoods_y-zoom_level, riverwoods_x+zoom_level, riverwoods_y+zoom_level, crs="EPSG:4326")[var_name]
-
+    clip_ds = ds.sel(
+        init_time=utc_init_time,
+        lead_time=pd.Timedelta(hours=lead_time_slider.value),
+        method="nearest",
+    ).rio.clip_box(
+        riverwoods_x - zoom_level,
+        riverwoods_y - zoom_level,
+        riverwoods_x + zoom_level,
+        riverwoods_y + zoom_level,
+        crs="EPSG:4326",
+    )[var_name]
 
 
     _title_str = f"{var_human_name.value} in Riverwoods at {make_time_str(clip_ds.valid_time.values, tzinfo=display_timezone.value)}"
@@ -257,7 +273,7 @@ def _(
     _title_str = f"{var_human_name.value} in Riverwoods at {make_time_str(clip_ds.valid_time.values, tzinfo=display_timezone.value)}"
 
     _fig = make_plot(ds_wgs84, _title_str)
-    mo.mpl.interactive(_fig) 
+    mo.mpl.interactive(_fig)
     return (ds_wgs84,)
 
 
@@ -272,7 +288,12 @@ def _(mo):
 @app.cell
 def _(ds_wgs84, riverwoods_x, riverwoods_y, zoom_level):
     ## Clip down to a rectangular area again now that it's in WGS84
-    ds_wgs84_clip = ds_wgs84.rio.clip_box(riverwoods_x-zoom_level*.9, riverwoods_y-zoom_level*.9, riverwoods_x+zoom_level*.9, riverwoods_y+zoom_level*.9)
+    ds_wgs84_clip = ds_wgs84.rio.clip_box(
+        riverwoods_x - zoom_level * 0.9,
+        riverwoods_y - zoom_level * 0.9,
+        riverwoods_x + zoom_level * 0.9,
+        riverwoods_y + zoom_level * 0.9,
+    )
     return (ds_wgs84_clip,)
 
 
@@ -281,12 +302,23 @@ def _(Polygon, ds_wgs84_clip, gpd, np, var_name):
     ## Make geodataframe from dataset, with the pixel geometries as polygons
 
     ## Make df -- will later turn this into a gdf once we create polygon geoms
-    df_polygons = ds_wgs84_clip.to_dataframe().reset_index().drop(columns=["ingested_forecast_length", "expected_forecast_length", "spatial_ref", "lead_time"])
+    df_polygons = (
+        ds_wgs84_clip.to_dataframe()
+        .reset_index()
+        .drop(
+            columns=[
+                "ingested_forecast_length",
+                "expected_forecast_length",
+                "spatial_ref",
+                "lead_time",
+            ]
+        )
+    )
 
     ## Get basic info to create polygons with
     # Get the coordinate arrays (assumes they are 1D and sorted)
-    lons = ds_wgs84_clip['x'].values
-    lats = ds_wgs84_clip['y'].values
+    lons = ds_wgs84_clip["x"].values
+    lats = ds_wgs84_clip["y"].values
     # Grab resolution directly off the diffs
     lon_diff = np.diff(lons)
     lat_diff = np.diff(lats)
@@ -294,35 +326,39 @@ def _(Polygon, ds_wgs84_clip, gpd, np, var_name):
     half_lon_step = np.mean(np.abs(lon_diff)) / 2.0
     half_lat_step = np.mean(np.abs(lat_diff)) / 2.0
     # Create min/max per pixel, to be turned into Polygon boundaries
-    df_polygons['lon_min'] = df_polygons['x'] - half_lon_step
-    df_polygons['lon_max'] = df_polygons['x'] + half_lon_step
-    df_polygons['lat_min'] = df_polygons['y'] - half_lat_step
-    df_polygons['lat_max'] = df_polygons['y'] + half_lat_step
+    df_polygons["lon_min"] = df_polygons["x"] - half_lon_step
+    df_polygons["lon_max"] = df_polygons["x"] + half_lon_step
+    df_polygons["lat_min"] = df_polygons["y"] - half_lat_step
+    df_polygons["lat_max"] = df_polygons["y"] + half_lat_step
 
     ## Create Polygon geoms
-    df_polygons['geometry'] = df_polygons.apply(
-        lambda row: Polygon([
-            # vertices, counterclockwise
-            (row['lon_min'], row['lat_min']),
-            (row['lon_max'], row['lat_min']),
-            (row['lon_max'], row['lat_max']),
-            (row['lon_min'], row['lat_max']),
-            (row['lon_min'], row['lat_min']),
-        ]), 
-        axis=1
+    df_polygons["geometry"] = df_polygons.apply(
+        lambda row: Polygon(
+            [
+                # vertices, counterclockwise
+                (row["lon_min"], row["lat_min"]),
+                (row["lon_max"], row["lat_min"]),
+                (row["lon_max"], row["lat_max"]),
+                (row["lon_min"], row["lat_max"]),
+                (row["lon_min"], row["lat_min"]),
+            ]
+        ),
+        axis=1,
     )
 
     ## Use newly created geometry column to convert to GeoDataFrame
     gdf_polygons = gpd.GeoDataFrame(
-        df_polygons[['x', 'y', var_name, 'geometry']], 
-        crs="EPSG:4326"
+        df_polygons[["x", "y", var_name, "geometry"]], crs="EPSG:4326"
     )
     return (gdf_polygons,)
 
 
 @app.cell
 def _(folium, gdf_polygons, riverwoods_x, riverwoods_y, var_name):
-    map = gdf_polygons.explore(var_name,style_kwds={"stroke":False, "fill_opacity":0.6})
+    # TODO: improve cmap by making 0 always white on temp graph?
+    cmap = "coolwarm" if var_name == "temperature_2m" else None
+
+    map = gdf_polygons.explore(var_name,style_kwds={"stroke":False, "fill_opacity":0.6}, cmap=cmap)
     folium.Marker(location=(riverwoods_y, riverwoods_x), popup="Riverwoods, IL").add_to(map)
     map
     return
@@ -375,7 +411,6 @@ def _(pd):
 @app.cell
 def _(plt):
     def make_plot(ds, title_str):
-
         fig, ax = plt.subplots()
         ds.plot(ax=ax)
         ax.set_title(title_str)
