@@ -33,6 +33,10 @@ app = marimo.App(
     auto_download=["html"],
 )
 
+with app.setup:
+    # Initialization code that runs before all other cells
+    pass
+
 
 @app.cell(hide_code=True)
 def _(mo):
@@ -109,9 +113,7 @@ def _(display_timezone, ds, make_time_str, mo):
 
 @app.cell
 def _(mo):
-    lead_time_slider = mo.ui.slider(
-        start=1, stop=48, step=1, value=18, show_value=True
-    )
+    lead_time_slider = mo.ui.slider(start=1, stop=48, step=1, value=18, show_value=True)
 
     mo.md(
         f"""
@@ -151,7 +153,6 @@ def _():
     # class ZoomLevels(Enum):
     #     Point = 0
     #     City = 2
-
 
     # zoom_level = mo.ui.dropdown(, value=1, show_value=True)
 
@@ -234,7 +235,6 @@ def _(
         crs="EPSG:4326",
     )[var_name]
 
-
     _title_str = f"{var_human_name.value} in Riverwoods at {make_time_str(clip_ds.valid_time.values, tzinfo=display_timezone.value)}"
 
     _fig = make_plot(clip_ds, _title_str)
@@ -268,7 +268,6 @@ def _(
         ds_wgs84 = ds_conic.rio.reproject("EPSG:4326", nodata=np.nan)
     else:
         ds_wgs84 = clip_ds.rio.reproject("EPSG:4326", nodata=np.nan)
-
 
     _title_str = f"{var_human_name.value} in Riverwoods at {make_time_str(clip_ds.valid_time.values, tzinfo=display_timezone.value)}"
 
@@ -358,8 +357,12 @@ def _(folium, gdf_polygons, riverwoods_x, riverwoods_y, var_name):
     # TODO: improve cmap by making 0 always white on temp graph?
     cmap = "coolwarm" if var_name == "temperature_2m" else None
 
-    map = gdf_polygons.explore(var_name,style_kwds={"stroke":False, "fill_opacity":0.6}, cmap=cmap)
-    folium.Marker(location=(riverwoods_y, riverwoods_x), popup="Riverwoods, IL").add_to(map)
+    map = gdf_polygons.explore(
+        var_name, style_kwds={"stroke": False, "fill_opacity": 0.6}, cmap=cmap
+    )
+    folium.Marker(location=(riverwoods_y, riverwoods_x), popup="Riverwoods, IL").add_to(
+        map
+    )
     map
     return
 
@@ -395,6 +398,7 @@ def _():
     import xvec
     from shapely.geometry import Polygon
     import folium
+
     return Polygon, folium, gpd, mo, np, pd, plt, xr
 
 
@@ -405,6 +409,7 @@ def _(pd):
         if tzinfo is not None:
             ts = ts.tz_localize("UTC").tz_convert(tzinfo)
         return ts.strftime("%Y-%m-%d %H:%M")
+
     return (make_time_str,)
 
 
@@ -415,6 +420,7 @@ def _(plt):
         ds.plot(ax=ax)
         ax.set_title(title_str)
         return fig
+
     return (make_plot,)
 
 
