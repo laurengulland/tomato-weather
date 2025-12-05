@@ -198,6 +198,7 @@ def _(dataset_name, dataset_name_to_dataset_path, xr):
 
 @app.cell
 def _(
+    dataset_name,
     display_timezone,
     ds,
     east,
@@ -229,7 +230,7 @@ def _(
         var_name
     ]
 
-    _title_str = f"{var_human_name.value} in Riverwoods at {make_time_str(clip_ds.valid_time.values, tzinfo=display_timezone.value)}"
+    _title_str = f"{dataset_name.value} {var_human_name.value} at {make_time_str(clip_ds.valid_time.values, tzinfo=display_timezone.value)}"
 
     _fig = make_plot(clip_ds, _title_str)
     mo.mpl.interactive(_fig)
@@ -263,7 +264,7 @@ def _(
     else:
         ds_wgs84 = clip_ds.rio.reproject("EPSG:4326", nodata=np.nan)
 
-    _title_str = f"{var_human_name.value} in Riverwoods at {make_time_str(clip_ds.valid_time.values, tzinfo=display_timezone.value)}"
+    _title_str = f"{dataset_name.value} {var_human_name.value} at {make_time_str(clip_ds.valid_time.values, tzinfo=display_timezone.value)}"
 
     _fig = make_plot(ds_wgs84, _title_str)
     mo.mpl.interactive(_fig)
